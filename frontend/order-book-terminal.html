@@ -1,0 +1,432 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Money Internals — Order Book Terminal</title>
+<style>
+:root{
+  --bg:#0B0E13; --panel:#121821; --panel2:#161D27; --line:#232A33; --line2:#2C3540;
+  --txt:#E6EAF0; --mut:#8B94A3; --mut2:#5F6975;
+  --bid:#2EBD85; --ask:#F6465D;
+  --bid-dim:rgba(46,189,133,.14); --ask-dim:rgba(246,70,93,.14);
+  --bid-glow:rgba(46,189,133,.10); --ask-glow:rgba(246,70,93,.10);
+  --accent:#2EBD85;
+  --mono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,monospace;
+  --sans:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  --r:8px;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{
+  margin:0; background:var(--bg); color:var(--txt); font-family:var(--sans);
+  font-size:15px; line-height:1.4; -webkit-font-smoothing:antialiased;
+  display:flex; flex-direction:column; min-height:100vh;
+}
+.tnum{font-variant-numeric:tabular-nums}
+button{font-family:inherit}
+
+/* ---------- top bar ---------- */
+.topbar{
+  display:flex; align-items:center; gap:20px; padding:12px 20px;
+  border-bottom:1px solid var(--line); background:var(--panel);
+}
+.brand{display:flex; align-items:center; gap:10px}
+.brand .name{font-weight:500; font-size:16px; letter-spacing:.2px}
+.brand .name b{color:var(--accent); font-weight:500}
+.ticker{
+  font-family:var(--mono); font-size:13px; color:var(--mut);
+  padding:4px 10px; border:1px solid var(--line2); border-radius:6px; letter-spacing:.5px;
+}
+.stats{display:flex; gap:22px; margin-left:auto}
+.stat{display:flex; flex-direction:column; align-items:flex-end; gap:2px}
+.stat .k{font-size:10px; letter-spacing:1.4px; text-transform:uppercase; color:var(--mut2)}
+.stat .v{font-family:var(--mono); font-size:17px; font-variant-numeric:tabular-nums}
+.stat .v.bid{color:var(--bid)} .stat .v.ask{color:var(--ask)}
+
+/* ---------- main grid ---------- */
+.main{flex:1; display:grid; grid-template-columns:minmax(0,1fr) 340px; min-height:0}
+.book-wrap{padding:18px 20px; min-width:0; display:flex; flex-direction:column}
+.side{border-left:1px solid var(--line); background:var(--panel); padding:18px; display:flex; flex-direction:column; gap:18px; overflow:auto}
+
+.panel-label{font-size:10px; letter-spacing:1.6px; text-transform:uppercase; color:var(--mut2); margin-bottom:10px}
+
+/* ---------- ladder ---------- */
+.ladder{flex:1; display:flex; flex-direction:column; justify-content:center; gap:1px; min-height:0}
+.col-head{
+  display:grid; grid-template-columns:1fr 1fr 64px; gap:8px; padding:0 12px 8px;
+  font-size:10px; letter-spacing:1.2px; text-transform:uppercase; color:var(--mut2);
+}
+.col-head span:nth-child(2),.col-head span:nth-child(3){text-align:right}
+.side-rows{display:flex; flex-direction:column; gap:2px}
+.row{
+  position:relative; display:grid; grid-template-columns:1fr 1fr 64px; gap:8px;
+  align-items:center; padding:9px 12px; border-radius:6px; overflow:hidden;
+  font-family:var(--mono); font-variant-numeric:tabular-nums; font-size:17px;
+  background:var(--panel); border:1px solid transparent;
+  transition:background .25s ease, border-color .25s ease;
+}
+.row .bar{position:absolute; top:0; right:0; height:100%; width:0; transition:width .45s cubic-bezier(.22,.61,.36,1)}
+.row.ask .bar{background:var(--ask-dim)}
+.row.bid .bar{background:var(--bid-dim)}
+.row > *{position:relative; z-index:1}
+.row .price{font-weight:500}
+.row.ask .price{color:var(--ask)} .row.bid .price{color:var(--bid)}
+.row .size{text-align:right; color:var(--txt)}
+.row .count{text-align:right; color:var(--mut); font-size:13px}
+.row.best{border-color:var(--line2)}
+.row.ask.best{background:var(--ask-glow)} .row.bid.best{background:var(--bid-glow)}
+.row.enter{animation:rowin .35s ease}
+@keyframes rowin{from{opacity:0; transform:translateY(4px)} to{opacity:1; transform:none}}
+
+.spread-band{
+  display:flex; align-items:center; justify-content:center; gap:28px;
+  margin:6px 0; padding:11px 12px; border-top:1px solid var(--line2); border-bottom:1px solid var(--line2);
+}
+.spread-band .item{display:flex; align-items:baseline; gap:8px}
+.spread-band .k{font-size:10px; letter-spacing:1.4px; text-transform:uppercase; color:var(--mut2)}
+.spread-band .v{font-family:var(--mono); font-variant-numeric:tabular-nums; font-size:16px; color:var(--txt)}
+.empty-note{color:var(--mut2); text-align:center; font-size:14px; padding:28px 0}
+
+/* ---------- ticket ---------- */
+.card{background:var(--panel2); border:1px solid var(--line); border-radius:var(--r); padding:14px}
+.seg{display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-bottom:10px}
+.seg button{
+  padding:9px; border-radius:6px; border:1px solid var(--line2); background:transparent;
+  color:var(--mut); font-size:13px; font-weight:500; cursor:pointer; transition:.15s;
+}
+.seg button:hover{color:var(--txt); border-color:var(--mut2)}
+.seg button[aria-pressed="true"]{color:#0B0E13}
+.seg.side button.buy[aria-pressed="true"]{background:var(--bid); border-color:var(--bid)}
+.seg.side button.sell[aria-pressed="true"]{background:var(--ask); border-color:var(--ask)}
+.seg.type button[aria-pressed="true"]{background:var(--line2); color:var(--txt); border-color:var(--line2)}
+.seg button:disabled{opacity:.4; cursor:not-allowed}
+.field{margin-bottom:10px}
+.field label{display:block; font-size:10px; letter-spacing:1.2px; text-transform:uppercase; color:var(--mut2); margin-bottom:5px}
+.field input{
+  width:100%; padding:9px 11px; background:var(--bg); border:1px solid var(--line2); border-radius:6px;
+  color:var(--txt); font-family:var(--mono); font-size:15px; font-variant-numeric:tabular-nums;
+}
+.field input:focus{outline:none; border-color:var(--accent); box-shadow:0 0 0 2px rgba(46,189,133,.2)}
+.field input:disabled{opacity:.45}
+.place{
+  width:100%; padding:11px; border:none; border-radius:6px; font-size:14px; font-weight:600;
+  color:#0B0E13; cursor:pointer; transition:.15s; background:var(--bid);
+}
+.place.sell{background:var(--ask)}
+.place:hover{filter:brightness(1.07)}
+.hint{font-size:11px; color:var(--mut2); margin-top:8px; text-align:center}
+
+/* ---------- resting orders ---------- */
+.orders{display:flex; flex-direction:column; gap:5px; max-height:180px; overflow:auto}
+.ord{
+  display:grid; grid-template-columns:auto 1fr auto auto; gap:8px; align-items:center;
+  padding:7px 9px; background:var(--panel2); border:1px solid var(--line); border-radius:6px;
+  font-family:var(--mono); font-size:12px; font-variant-numeric:tabular-nums;
+}
+.ord .tag{padding:1px 6px; border-radius:4px; font-size:10px; font-weight:600; letter-spacing:.5px}
+.ord .tag.buy{background:var(--bid-dim); color:var(--bid)}
+.ord .tag.sell{background:var(--ask-dim); color:var(--ask)}
+.ord .oid{color:var(--mut)}
+.ord .x{border:none; background:transparent; color:var(--mut2); cursor:pointer; font-size:15px; line-height:1; padding:2px 4px; border-radius:4px}
+.ord .x:hover{color:var(--ask); background:var(--ask-dim)}
+.orders-empty{font-size:12px; color:var(--mut2); padding:6px 2px}
+.reset{
+  width:100%; margin-top:10px; padding:9px; background:transparent; border:1px solid var(--line2);
+  border-radius:6px; color:var(--mut); font-size:12px; cursor:pointer; transition:.15s;
+}
+.reset:hover{color:var(--txt); border-color:var(--mut2)}
+
+/* ---------- stepper ---------- */
+.stepper{
+  display:grid; grid-template-columns:auto 1fr auto; align-items:center; gap:20px;
+  padding:14px 20px; border-top:1px solid var(--line); background:var(--panel);
+}
+.scn-meta{display:flex; flex-direction:column; gap:2px; white-space:nowrap}
+.scn-meta .title{font-size:13px; font-weight:500}
+.scn-meta .count{font-family:var(--mono); font-size:11px; color:var(--mut2); letter-spacing:1px}
+.scn-caption{font-size:16px; color:var(--txt); line-height:1.45}
+.scn-caption b{color:var(--accent); font-weight:500}
+.scn-nav{display:flex; gap:8px}
+.scn-nav button{
+  padding:9px 16px; border:1px solid var(--line2); background:transparent; color:var(--txt);
+  border-radius:6px; font-size:13px; font-weight:500; cursor:pointer; transition:.15s;
+}
+.scn-nav button:hover:not(:disabled){border-color:var(--accent); color:var(--accent)}
+.scn-nav button:disabled{opacity:.35; cursor:not-allowed}
+.scn-nav .next{background:var(--accent); color:#0B0E13; border-color:var(--accent)}
+.scn-nav .next:hover:not(:disabled){filter:brightness(1.07); color:#0B0E13}
+
+@media (max-width:880px){
+  .main{grid-template-columns:1fr; grid-template-rows:1fr auto}
+  .side{border-left:none; border-top:1px solid var(--line)}
+  .stepper{grid-template-columns:1fr; gap:12px; text-align:center}
+  .scn-nav{justify-content:center}
+}
+@media (prefers-reduced-motion:reduce){
+  *{animation:none !important; transition:none !important}
+}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand">
+    <svg viewBox="18 12 44 56" width="22" height="28" aria-hidden="true">
+      <rect x="22" y="16" width="36" height="5" rx="1.5" fill="#F6465D"/>
+      <rect x="26" y="24" width="28" height="5" rx="1.5" fill="#F6465D"/>
+      <rect x="30" y="32" width="20" height="5" rx="1.5" fill="#F6465D"/>
+      <rect x="30" y="44" width="20" height="5" rx="1.5" fill="#2EBD85"/>
+      <rect x="26" y="52" width="28" height="5" rx="1.5" fill="#2EBD85"/>
+      <rect x="22" y="60" width="36" height="5" rx="1.5" fill="#2EBD85"/>
+    </svg>
+    <span class="name">Money<b>Internals</b></span>
+  </div>
+  <span class="ticker">ACME / USD</span>
+  <div class="stats">
+    <div class="stat"><span class="k">Mid</span><span class="v tnum" id="st-mid">—</span></div>
+    <div class="stat"><span class="k">Best bid</span><span class="v bid tnum" id="st-bid">—</span></div>
+    <div class="stat"><span class="k">Best ask</span><span class="v ask tnum" id="st-ask">—</span></div>
+    <div class="stat"><span class="k">Spread</span><span class="v tnum" id="st-spread">—</span></div>
+  </div>
+</div>
+
+<div class="main">
+  <div class="book-wrap">
+    <div class="col-head"><span>Price</span><span>Size</span><span>Orders</span></div>
+    <div class="ladder">
+      <div class="side-rows" id="asks"></div>
+      <div class="spread-band" id="spread-band"></div>
+      <div class="side-rows" id="bids"></div>
+    </div>
+  </div>
+
+  <div class="side">
+    <div>
+      <div class="panel-label">Order ticket</div>
+      <div class="card">
+        <div class="seg side">
+          <button class="buy" data-side="buy" aria-pressed="true">Buy</button>
+          <button class="sell" data-side="sell" aria-pressed="false">Sell</button>
+        </div>
+        <div class="seg type">
+          <button data-type="limit" aria-pressed="true">Limit</button>
+          <button data-type="market" aria-pressed="false" disabled title="Matching engine arrives in episode 2">Market</button>
+        </div>
+        <div class="field">
+          <label for="f-price">Price</label>
+          <input id="f-price" type="number" step="0.5" value="100.00">
+        </div>
+        <div class="field">
+          <label for="f-size">Size</label>
+          <input id="f-size" type="number" step="1" min="1" value="10">
+        </div>
+        <button class="place" id="place">Place buy order</button>
+        <div class="hint">Orders rest on the book. Matching arrives in episode 2.</div>
+      </div>
+    </div>
+
+    <div>
+      <div class="panel-label">Resting orders</div>
+      <div class="orders" id="orders"></div>
+      <button class="reset" id="reset">Clear book</button>
+    </div>
+  </div>
+</div>
+
+<div class="stepper">
+  <div class="scn-meta">
+    <span class="title" id="scn-title">What is an order book?</span>
+    <span class="count tnum" id="scn-count">1 / 7</span>
+  </div>
+  <div class="scn-caption" id="scn-caption"></div>
+  <div class="scn-nav">
+    <button id="back">‹ Back</button>
+    <button class="next" id="next">Next ›</button>
+  </div>
+</div>
+
+<script>
+/* ====================================================================
+   DATA SOURCE
+   --------------------------------------------------------------------
+   This terminal runs on a self-contained JS order book (below) that
+   mirrors src/exchange/book.py, so it works offline for recording.
+
+   To drive it from your Python FastAPI backend instead:
+     1. set USE_API = true
+     2. implement fetchSnapshot() -> GET  /book
+        and postOrder()/postCancel() -> POST /orders, DELETE /orders/:id
+     3. make render() read from the API snapshot
+   The on-screen behaviour stays identical; only the source changes.
+   ==================================================================== */
+const USE_API = false;
+
+/* ---- OrderBook: mirrors book.py (price -> aggregated level) -------- */
+class OrderBook {
+  constructor(){ this.orders = new Map(); }            // id -> order (insertion-ordered)
+  add(o){ o.remaining = o.qty; this.orders.set(o.id, o); }
+  cancel(id){ const o = this.orders.get(id) || null; if(o) this.orders.delete(id); return o; }
+  reset(){ this.orders.clear(); }
+  _levels(side){
+    const m = new Map();
+    for(const o of this.orders.values()){
+      if(o.side !== side) continue;
+      const e = m.get(o.price) || {price:o.price, size:0, count:0};
+      e.size += o.remaining; e.count += 1; m.set(o.price, e);
+    }
+    return [...m.values()];
+  }
+  snapshot(){
+    const asks = this._levels('sell').sort((a,b)=>a.price-b.price);  // best (lowest) first
+    const bids = this._levels('buy').sort((a,b)=>b.price-a.price);   // best (highest) first
+    const bestAsk = asks.length ? asks[0].price : null;
+    const bestBid = bids.length ? bids[0].price : null;
+    const spread = (bestAsk!=null && bestBid!=null) ? bestAsk-bestBid : null;
+    const mid    = (bestAsk!=null && bestBid!=null) ? (bestAsk+bestBid)/2 : null;
+    return {asks, bids, bestAsk, bestBid, spread, mid};
+  }
+}
+const book = new OrderBook();
+
+/* ---- formatting --------------------------------------------------- */
+const px = p => p==null ? '—' : p.toFixed(2);
+const qty = q => q==null ? '—' : String(q);
+
+/* ---- render ------------------------------------------------------- */
+const $ = id => document.getElementById(id);
+let prevPrices = new Set();          // for entrance animation on new levels
+
+function render(){
+  const s = book.snapshot();
+  const allSizes = [...s.asks, ...s.bids].map(l=>l.size);
+  const maxSize = allSizes.length ? Math.max(...allSizes) : 1;
+
+  // header stats
+  $('st-mid').textContent    = s.mid==null ? '—' : s.mid.toFixed(2);
+  $('st-bid').textContent    = px(s.bestBid);
+  $('st-ask').textContent    = px(s.bestAsk);
+  $('st-spread').textContent = s.spread==null ? '—' : s.spread.toFixed(2);
+
+  const nowPrices = new Set();
+  const rowHTML = (lvl, side, isBest) => {
+    const key = side+lvl.price; nowPrices.add(key);
+    const isNew = !prevPrices.has(key);
+    const w = Math.max(6, (lvl.size/maxSize)*100);
+    return `<div class="row ${side} ${isBest?'best':''} ${isNew?'enter':''}">
+      <div class="bar" style="width:${w}%"></div>
+      <span class="price">${px(lvl.price)}</span>
+      <span class="size">${qty(lvl.size)}</span>
+      <span class="count">${lvl.count}</span>
+    </div>`;
+  };
+
+  // asks: highest price at top, best (lowest) ask just above the spread
+  const asksDisplay = [...s.asks].reverse();
+  $('asks').innerHTML = asksDisplay.length
+    ? asksDisplay.map((l,i)=>rowHTML(l,'ask', i===asksDisplay.length-1)).join('')
+    : `<div class="empty-note">no sellers yet</div>`;
+
+  // bids: best (highest) bid just below the spread
+  $('bids').innerHTML = s.bids.length
+    ? s.bids.map((l,i)=>rowHTML(l,'bid', i===0)).join('')
+    : `<div class="empty-note">no buyers yet</div>`;
+
+  // spread band
+  $('spread-band').innerHTML =
+    (s.spread!=null)
+    ? `<div class="item"><span class="k">Spread</span><span class="v tnum">${s.spread.toFixed(2)}</span></div>
+       <div class="item"><span class="k">Mid</span><span class="v tnum">${s.mid.toFixed(2)}</span></div>`
+    : `<div class="item"><span class="k">Spread</span><span class="v tnum">—</span></div>`;
+
+  // resting orders list
+  const ords = [...book.orders.values()];
+  $('orders').innerHTML = ords.length
+    ? ords.map(o=>`<div class="ord">
+        <span class="tag ${o.side}">${o.side.toUpperCase()}</span>
+        <span class="oid">${o.id}</span>
+        <span class="tnum">${px(o.price)} × ${qty(o.remaining)}</span>
+        <button class="x" data-cancel="${o.id}" aria-label="Cancel ${o.id}">×</button>
+      </div>`).join('')
+    : `<div class="orders-empty">Book is empty.</div>`;
+
+  prevPrices = nowPrices;
+}
+
+/* ---- ticket ------------------------------------------------------- */
+let ticketSide = 'buy', ticketType = 'limit', autoId = 1;
+
+document.querySelectorAll('.seg.side button').forEach(b=>{
+  b.addEventListener('click', ()=>{
+    ticketSide = b.dataset.side;
+    document.querySelectorAll('.seg.side button').forEach(x=>x.setAttribute('aria-pressed', x===b));
+    const place = $('place');
+    place.textContent = `Place ${ticketSide} order`;
+    place.classList.toggle('sell', ticketSide==='sell');
+  });
+});
+document.querySelectorAll('.seg.type button:not(:disabled)').forEach(b=>{
+  b.addEventListener('click', ()=>{
+    ticketType = b.dataset.type;
+    document.querySelectorAll('.seg.type button').forEach(x=>x.setAttribute('aria-pressed', x===b));
+  });
+});
+
+$('place').addEventListener('click', ()=>{
+  const price = parseFloat($('f-price').value);
+  const size  = parseInt($('f-size').value, 10);
+  if(!isFinite(price) || !isFinite(size) || size < 1) return;
+  book.add({id:`o${autoId++}`, side:ticketSide, type:ticketType, price, qty:size});
+  render();
+});
+
+$('orders').addEventListener('click', e=>{
+  const id = e.target.getAttribute('data-cancel');
+  if(id){ book.cancel(id); render(); }
+});
+
+$('reset').addEventListener('click', ()=>{ book.reset(); render(); });
+
+/* ---- scenario: "What is an order book?" --------------------------- */
+const scenario = [
+  { cap: `An empty order book. No buyers, no sellers — and so, <b>no price</b>.`,
+    apply(){} },
+  { cap: `A seller offers 5 units at 101.00. The first <b>ask</b> appears on the book.`,
+    apply(){ book.add({id:'a1', side:'sell', type:'limit', price:101.00, qty:5}); } },
+  { cap: `A buyer bids 100.00 for 10 units. Now there are two sides — and a <b>spread</b> of 1.00 between them.`,
+    apply(){ book.add({id:'b1', side:'buy', type:'limit', price:100.00, qty:10}); } },
+  { cap: `More sellers stack above. The ask side builds <b>upward</b>, each willing to sell only at a higher price.`,
+    apply(){ book.add({id:'a2', side:'sell', type:'limit', price:101.50, qty:8});
+             book.add({id:'a3', side:'sell', type:'limit', price:102.00, qty:12}); } },
+  { cap: `More buyers stack below. The bid side builds <b>downward</b> — all this resting size is the market's <b>depth</b>.`,
+    apply(){ book.add({id:'b2', side:'buy', type:'limit', price:99.50, qty:15});
+             book.add({id:'b3', side:'buy', type:'limit', price:99.00, qty:20}); } },
+  { cap: `A second buyer joins 100.00. Same price, back of the queue — the <b>depth at that level</b> grows to 17.`,
+    apply(){ book.add({id:'b4', side:'buy', type:'limit', price:100.00, qty:7}); } },
+  { cap: `The seller at 101.00 cancels. Watch the best ask <b>jump</b> to 101.50 — the book is a living picture of supply and demand.`,
+    apply(){ book.cancel('a1'); } },
+];
+let step = 0;
+
+function replayTo(n){
+  book.reset();
+  for(let i=0; i<=n; i++) scenario[i].apply(book);
+  render();                         // only newly-arrived levels animate in
+  $('scn-caption').innerHTML = scenario[n].cap;
+  $('scn-count').textContent = `${n+1} / ${scenario.length}`;
+  $('back').disabled = n===0;
+  $('next').disabled = n===scenario.length-1;
+}
+$('next').addEventListener('click', ()=>{ if(step<scenario.length-1){ step++; replayTo(step); } });
+$('back').addEventListener('click', ()=>{ if(step>0){ step--; replayTo(step); } });
+document.addEventListener('keydown', e=>{
+  if(document.activeElement && document.activeElement.tagName==='INPUT') return;
+  if(e.key==='ArrowRight'){ $('next').click(); }
+  if(e.key==='ArrowLeft'){ $('back').click(); }
+});
+
+/* ---- boot --------------------------------------------------------- */
+replayTo(0);
+</script>
+</body>
+</html>
