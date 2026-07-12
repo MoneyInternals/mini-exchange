@@ -7,7 +7,7 @@ assume the names below exist.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 
 
@@ -45,12 +45,11 @@ class Order:
     type: OrderType
     quantity: int
     price: float | None = None
-    remaining: int | None = None
+    remaining: int = field(init=False)          # not Optional, not a constructor arg
     status: OrderStatus = OrderStatus.OPEN
 
     def __post_init__(self) -> None:
-        if self.remaining is None:
-            self.remaining = self.quantity
+        self.remaining = self.quantity
 
 
 @dataclass

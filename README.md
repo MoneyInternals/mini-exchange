@@ -21,12 +21,13 @@ is `exchange` (distribution ≠ import name is standard).
 | Episode | Mechanism | Tag |
 |---|---|---|
 | 1 — The order book | Bids, asks, spread, depth | `ep01-order-book` |
+| 2 — Market vs limit orders | Matching, crossing, market orders, the trade tape | `ep02-market-vs-limit` |
 
 Check out a tag to see the repo exactly as it stood at that episode:
 `git checkout ep01-order-book`
 
-**State as of `ep01-order-book`:** the order book (`book.py`) is implemented
-and tested; the matching engine (`engine.py`) is stubbed — that's episode 2.
+**State as of `ep02-market-vs-limit`:** the order book (`book.py`) and the matching engine (`engine.py`) is implemented
+and tested; bots and the API are later phases.
 
 ## Want to learn it properly? Build it yourself
 
