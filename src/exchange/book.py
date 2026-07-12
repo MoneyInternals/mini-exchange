@@ -1,4 +1,4 @@
-"""OrderBook — YOUR code goes here.
+"""OrderBook — the resting-order data structure (episode 1)
 
 The book is the *data structure*: it stores resting (unmatched) limit orders and
 gives fast access to the best prices. It does NOT decide how trades happen — that
@@ -87,11 +87,11 @@ class OrderBook:
         bids = levels(self.bids, descending=True) # highest price
         asks = levels(self.asks, descending=False) # lowest first
 
-        best_bids = bids[0]["price"] if bids else None
-        best_asks = asks[0]["price"] if asks else None
-        spread  = (best_asks - best_bids) if (best_bids is not None and best_asks is not None) else None
-        mid     = (best_bids + best_asks) / 2 if (best_bids is not None and best_asks is not None) else None
+        best_bid = bids[0]["price"] if bids else None
+        best_ask = asks[0]["price"] if asks else None
+        spread  = (best_ask - best_bid) if (best_bid is not None and best_ask is not None) else None
+        mid     = (best_bid + best_ask) / 2 if (best_bid is not None and best_ask is not None) else None
 
         return {"bids": bids, "asks": asks,
-                "best_bid": best_bids, "best_ask": best_asks,
+                "best_bid": best_bid, "best_ask": best_ask,
                 "spread": spread, "mid": mid}
