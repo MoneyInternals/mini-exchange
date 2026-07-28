@@ -16,9 +16,10 @@ let tests/test_book.py drive you.
 """
 from __future__ import annotations
 
+import queue
 from collections import deque
 
-from .domain import Order, Side
+from .domain import Order, Side, OrderStatus
 
 
 class OrderBook:
@@ -95,3 +96,28 @@ class OrderBook:
         return {"bids": bids, "asks": asks,
                 "best_bid": best_bid, "best_ask": best_ask,
                 "spread": spread, "mid": mid}
+
+    def front_at(self, side: Side, price: float) -> Order | None:
+        """We use deque to handle execution of the first item in the queue - time priorty"""
+        queue = self._side(side).get(price) #deque at that price or return None
+        return queue[0] if queue else None
+
+    def queue_position(self, order_id: str) -> int | None:
+        """Get this order's price level in the queue or return None"""
+        for side_map in (self.bids, self.asks): # since we don't know which book the order is in, we check both
+            for queue in side_map.values(): # Goes through the price level in the dict
+                for index, order in enumerate(queue):
+                    if order.id == order_id:
+                        return index + 1 # if a match is found +1 so it's human-readable
+        return None
+
+    def units_ahead(self, order_id: str) -> int | None:
+        """Resting units that must fill before this order gets anything."""
+        for side_map in (self.bids, self.asks):
+            for queue in side_map.values():
+                total = 0
+                for order in queue:
+                    if order.id == order_id:
+                        return total
+                    total += order.remaining
+        return None

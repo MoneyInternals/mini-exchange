@@ -10,6 +10,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 
+@property
+def filled(self) -> int:
+    return self.quantity - self.remaining
 
 class Side(Enum):
     BUY = "buy"

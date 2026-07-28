@@ -39,8 +39,15 @@ consume levels), and not mutating a list while iterating it.
 from __future__ import annotations
 
 from .book import OrderBook
-from .domain import Order, Trade, Side, OrderType
+from .domain import Order, Trade, Side, OrderType, OrderStatus
 
+
+def _touch(order: Order) -> None:
+    """Update status from what's left. Called after every fill."""
+    if order.remaining == 0:
+        order.status = OrderStatus.FILLED
+    elif order.remaining < order.quantity:
+        order.status = OrderStatus.PARTIALLY_FILLED
 
 class MatchingEngine:
     def __init__(self, book: OrderBook | None = None) -> None:
@@ -68,13 +75,15 @@ class MatchingEngine:
             # 3. The maker: FRONT of the queue at the best opposing price.
             #    Front = oldest = time priority. This one line IS episode 3.
             opp = Side.SELL if order.side == Side.BUY else Side.BUY
-            maker = self.book.orders_at(opp, best)[0]
+            maker = self.book.front_at(opp, best)
 
             # 4. Trade. Price is `best` — which IS the maker's price.
             #    That's the price-improvement rule falling out for free.
             qty = min(order.remaining, maker.remaining)
             maker.remaining -= qty
             order.remaining -=qty
+            _touch(maker)
+            _touch(order)
             trades.append(Trade(price=best, quantity=qty, taker_order_id=order.id,
                                 maker_order_id=maker.id, aggressor=order.side))
 
@@ -90,4 +99,7 @@ class MatchingEngine:
 
     def cancel(self, order_id: str) -> Order | None:
         """Cancel a resting order. Delegate to the book; return it or None."""
-        return self.book.cancel(order_id)
+        order = self.book.cancel(order_id)
+        if order is not None:
+            order.status = OrderStatus.CANCELLED
+        return order
