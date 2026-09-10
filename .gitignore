@@ -216,3 +216,6 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Local-only orientation file — never push (public repo)
+CLAUDE.md
